@@ -17,6 +17,11 @@ export interface TimeSlot {
   available: boolean;
 }
 
+export interface DayTimeSlot {
+  date: string;
+  available: boolean;
+}
+
 export interface GoogleCalendarEvent {
   id?: string;
   summary: string;

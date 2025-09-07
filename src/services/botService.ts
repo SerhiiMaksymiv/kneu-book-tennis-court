@@ -2,7 +2,7 @@ import { Context, Telegraf, Markup } from 'telegraf';
 import { callbackQuery } from "telegraf/filters";
 import { Database } from '../config/database.js';
 import { GoogleCalendarService } from './googleCalendar.js';
-import { TimeSlot } from '../types/index.js';
+import { TimeSlot, DayTimeSlot } from '../types/index.js';
 import moment from 'moment';
 
 export class BotService {
@@ -19,14 +19,15 @@ export class BotService {
 
   private setupCommands() {
     this.bot.start((ctx) => this.handleStart(ctx));
-    // this.bot.command('book', (ctx) => this.handleBook(ctx));
-    // this.bot.command('mybookings', (ctx) => this.handleMyBookings(ctx));
+    this.bot.command('book', (ctx) => this.handleBook(ctx));
+    this.bot.command('mybookings', (ctx) => this.handleMyBookings(ctx));
     // this.bot.command('cancel', (ctx) => this.handleCancelCommand(ctx));
     
-    // this.bot.action(/^book_(.+)$/, (ctx) => this.handleBookSlot(ctx));
+    this.bot.action(/^book_(.+)$/, (ctx) => this.handleBookSlot(ctx));
     // this.bot.action(/^cancel_(\d+)$/, (ctx) => this.handleCancelBooking(ctx));
     // this.bot.action(/^modify_(\d+)$/, (ctx) => this.handleModifyBooking(ctx));
     this.bot.action('show_available_slots', (ctx) => this.showAvailableSlots(ctx));
+    this.bot.action('show_available_day_slots', (ctx) => this.showAvailableDaySlots(ctx));
     this.bot.action('main_menu', (ctx) => this.showMainMenu(ctx));
   }
 
@@ -40,7 +41,6 @@ I can help you:
 • ✏️ Modify or cancel bookings
 
 Let's get started!`;
-
     await ctx.reply(welcomeMessage, this.getMainMenuKeyboard());
   }
 
@@ -48,11 +48,32 @@ Let's get started!`;
     await this.showAvailableSlots(ctx);
   }
 
+  private async showAvailableDaySlots(ctx: Context) {
+    try {
+      await ctx.reply('🔍 Checking available slots...');
+      
+      const slots = await this.calendar.getAvailableDaySlots(14);
+      
+      if (slots.length === 0) {
+        await ctx.reply('😔 No available slots found for the next 14 days. Please try again later.', 
+          Markup.inlineKeyboard([[Markup.button.callback('🏠 Main Menu', 'main_menu')]]));
+        return;
+      }
+
+      const keyboard = this.createDaySlotsKeyboard(slots);
+      await ctx.reply('🎾 Available tennis sessions:\n\nSelect day to book:', keyboard);
+    } catch (error) {
+      console.error('Error showing available slots:', error);
+      await ctx.reply('❌ Sorry, I had trouble fetching available slots. Please try again later.',
+        Markup.inlineKeyboard([[Markup.button.callback('🏠 Main Menu', 'main_menu')]]));
+    }
+  }
+
   private async showAvailableSlots(ctx: Context) {
     try {
       await ctx.reply('🔍 Checking available slots...');
       
-      const slots = await this.calendar.getAvailableSlots(7);
+      const slots = await this.calendar.getAvailableSlots(14);
       
       if (slots.length === 0) {
         await ctx.reply('😔 No available slots found for the next 7 days. Please try again later.', 
@@ -69,14 +90,24 @@ Let's get started!`;
     }
   }
 
+  private createDaySlotsKeyboard(slots: DayTimeSlot[]) {
+    const buttons = slots.slice(0, 20).map(slot => {
+      const displayDate = moment(`${slot.date}`).format('MMM DD');
+      return Markup.button.callback(`📅 ${displayDate}`, `book_day_${slot.date}`)
+    });
+
+    buttons.push(Markup.button.callback('🏠 Main Menu', 'main_menu'));
+    return Markup.inlineKeyboard(buttons, { columns: 2 })
+  }
+
   private createSlotsKeyboard(slots: TimeSlot[]) {
     const buttons = slots.slice(0, 20).map(slot => {
-      const displayDate = moment(`${slot.date} ${slot.time}`).format('MMM DD, HH:mm');
-      return [Markup.button.callback(`📅 ${displayDate}`, `book_${slot.date}_${slot.time}`)];
+      const displayDate = moment(`${slot.date}`).format('MMM DD');
+      return Markup.button.callback(`📅 ${displayDate}`, `book_${slot.date}`)
     });
-    
-    buttons.push([Markup.button.callback('🏠 Main Menu', 'main_menu')]);
-    return Markup.inlineKeyboard(buttons);
+
+    buttons.push(Markup.button.callback('🏠 Main Menu', 'main_menu'));
+    return Markup.inlineKeyboard(buttons, { columns: 2 })
   }
 
   private async handleBookSlot(ctx: Context) {
@@ -145,7 +176,7 @@ Let's get started!`;
       } catch (error) {
         console.error('Error booking slot:', error);
         await ctx.reply('❌ Sorry, there was an error booking your session. The slot might no longer be available. Please try another time.',
-          Markup.inlineKeyboard([[Markup.button.callback('🔄 Try Again', 'show_available_slots')]]));
+          Markup.inlineKeyboard([[Markup.button.callback('🔄 Try Again', 'show_available_day_slots')]]));
       }
 
     }
@@ -161,7 +192,7 @@ Let's get started!`;
       if (bookings.length === 0) {
         await ctx.reply('📋 You have no active bookings.',
           Markup.inlineKeyboard([
-            [Markup.button.callback('🎾 Book Session', 'show_available_slots')],
+            [Markup.button.callback('🎾 Book Session', 'show_available_day_slots')],
             [Markup.button.callback('🏠 Main Menu', 'main_menu')]
           ]));
         return;
@@ -224,7 +255,7 @@ Let's get started!`;
 
   Your booking has been cancelled and removed from the coach's calendar.`,
           Markup.inlineKeyboard([
-            [Markup.button.callback('🎾 Book New Session', 'show_available_slots')],
+            [Markup.button.callback('🎾 Book New Session', 'show_available_day_slots')],
             [Markup.button.callback('🏠 Main Menu', 'main_menu')]
           ]));
 
@@ -253,7 +284,7 @@ Let's get started!`;
   This ensures the calendar stays accurate and the coach is properly notified.`,
         Markup.inlineKeyboard([
           [Markup.button.callback(`❌ Cancel #${bookingId}`, `cancel_${bookingId}`)],
-          [Markup.button.callback('🎾 View Available Slots', 'show_available_slots')],
+          [Markup.button.callback('🎾 View Available Slots', 'show_available_day_slots')],
           [Markup.button.callback('🏠 Main Menu', 'main_menu')]
         ]));
     }
@@ -261,7 +292,7 @@ Let's get started!`;
 
   private getMainMenuKeyboard() {
     return Markup.inlineKeyboard([
-      [Markup.button.callback('🎾 Book Session', 'show_available_slots')],
+      [Markup.button.callback('🎾 Book Session', 'show_available_day_slots')],
       [Markup.button.callback('📋 My Bookings', 'my_bookings')]
     ]);
   }

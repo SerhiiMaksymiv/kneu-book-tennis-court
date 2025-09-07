@@ -1,6 +1,6 @@
 import { google } from 'googleapis';
 import { Database } from '../config/database.js';
-import { GoogleCalendarEvent, TimeSlot } from '../types/index.js';
+import { GoogleCalendarEvent, TimeSlot, DayTimeSlot } from '../types/index.js';
 import moment from 'moment';
 
 export class GoogleCalendarService {
@@ -75,6 +75,45 @@ export class GoogleCalendarService {
     }
   }
 
+  async getAvailableDaySlots(daysAhead: number = 7): Promise<DayTimeSlot[]> {
+    try {
+      await this.refreshTokenIfNeeded();
+      
+      const now = moment();
+      const endDate = moment().add(daysAhead, 'days');
+      
+      const response = await this.calendar.events.list({
+        calendarId: process.env.CALENDAR_ID || 'primary',
+        timeMin: now.toISOString(),
+        timeMax: endDate.toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime'
+      });
+
+      const busySlots = new Set(
+        response.data.items?.map((event: any) => 
+          moment(event.start.dateTime).format('YYYY-MM-DD')
+        ) || []
+      );
+
+      const availableSlots: DayTimeSlot[] = [];
+      
+      for (let day = 0; day < daysAhead; day++) {
+        const currentDate = moment().add(day, 'days').format('YYYY-MM-DD');
+        
+        availableSlots.push({
+          date: currentDate,
+          available: !busySlots.has(currentDate)
+        });
+      }
+
+      return availableSlots.filter(slot => slot.available);
+    } catch (error) {
+      console.error('Error fetching available slots:', error);
+      throw error;
+    }
+  }
+
   async getAvailableSlots(daysAhead: number = 7): Promise<TimeSlot[]> {
     try {
       await this.refreshTokenIfNeeded();
@@ -97,7 +136,7 @@ export class GoogleCalendarService {
       );
 
       const availableSlots: TimeSlot[] = [];
-      const workingHours = [9, 10, 11, 14, 15, 16, 17, 18, 19]; // 9AM-12PM, 2PM-8PM
+      const workingHours = [8, 9, 10, 11, 14, 15, 16, 17, 18, 19]; // 9AM-12PM, 2PM-8PM
       
       for (let day = 0; day < daysAhead; day++) {
         const currentDate = moment().add(day, 'days');

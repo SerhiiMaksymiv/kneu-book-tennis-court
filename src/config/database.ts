@@ -90,9 +90,7 @@ export class Database {
   async storeTokens(accessToken: string, refreshToken: string, expiryDate: number): Promise<void> {
     const run = promisify(this.db.run.bind(this.db));
     await run(`DELETE FROM auth_tokens`); // Keep only latest token
-    await run(`
-      INSERT INTO auth_tokens (accessToken, refreshToken, expiryDate)
-      VALUES (${accessToken}, ${refreshToken}, ${expiryDate})`);
+    await run(`INSERT INTO auth_tokens (accessToken, refreshToken, expiryDate) VALUES ("${accessToken}", "${refreshToken}", ${expiryDate})`);
   }
 
   async getTokens(): Promise<{ accessToken: string; refreshToken: string; expiryDate: number } | null> {
