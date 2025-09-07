@@ -4,6 +4,7 @@ import { Database } from './config/database.js';
 import { GoogleCalendarService } from './services/googleCalendar.js';
 import { BotService } from './services/botService.js';
 import { AuthServer } from './server.js';
+import { SQLiteConfig } from './database/types.js';
 
 dotenv.config();
 
@@ -17,10 +18,23 @@ async function main() {
     process.exit(1);
   }
 
+  const config: SQLiteConfig = {
+    dbPath: process.env.SQLITE_DB_PATH || './data/tennis_bookings.db',
+    backupPath: process.env.SQLITE_BACKUP_PATH || './data/backups/',
+    maxConnections: parseInt(process.env.SQLITE_MAX_CONNECTIONS || '10'),
+    timeout: parseInt(process.env.SQLITE_TIMEOUT || '30000'),
+    autoBackup: process.env.DB_AUTO_BACKUP === 'true',
+    backupInterval: parseInt(process.env.DB_BACKUP_INTERVAL || '24'),
+    retentionDays: parseInt(process.env.DB_RETENTION_DAYS || '30'),
+    logQueries: process.env.DB_LOG_QUERIES === 'true'
+  };
+
+
   try {
     // Initialize services
-    const db = new Database(process.env.DB_PATH || './tennis_bookings.db');
-    await db.init();
+    // const db = new Database(process.env.DB_PATH || './tennis_bookings.db');
+    // await db.init();
+    const db = new Database();
     const calendar = new GoogleCalendarService(db);
     const bot = new Telegraf(process.env.BOT_TOKEN!);
     
