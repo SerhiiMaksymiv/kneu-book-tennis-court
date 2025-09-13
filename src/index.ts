@@ -29,12 +29,8 @@ async function main() {
     logQueries: process.env.DB_LOG_QUERIES === 'true'
   };
 
-
   try {
-    // Initialize services
-    // const db = new Database(process.env.DB_PATH || './tennis_bookings.db');
-    // await db.init();
-    const db = new Database();
+    const db = new Database(config);
     const calendar = new GoogleCalendarService(db);
     const bot = new Telegraf(process.env.BOT_TOKEN!);
     

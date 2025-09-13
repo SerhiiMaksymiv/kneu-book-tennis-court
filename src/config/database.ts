@@ -11,18 +11,7 @@ export class Database {
   private migrationManager: MigrationManager;
   private scheduler: DatabaseScheduler;
 
-  constructor() {
-    const config: SQLiteConfig = {
-      dbPath: process.env.SQLITE_DB_PATH || './data/tennis_bookings.db',
-      backupPath: process.env.SQLITE_BACKUP_PATH || './data/backups/',
-      maxConnections: parseInt(process.env.SQLITE_MAX_CONNECTIONS || '10'),
-      timeout: parseInt(process.env.SQLITE_TIMEOUT || '30000'),
-      autoBackup: process.env.DB_AUTO_BACKUP === 'true',
-      backupInterval: parseInt(process.env.DB_BACKUP_INTERVAL || '24'),
-      retentionDays: parseInt(process.env.DB_RETENTION_DAYS || '30'),
-      logQueries: process.env.DB_LOG_QUERIES === 'true'
-    };
-
+  constructor(config: SQLiteConfig) {
     this.dbConnection = new DatabaseConnection(config);
     this.bookingRepo = new BookingRepository(this.dbConnection);
     this.migrationManager = new MigrationManager(this.dbConnection);
