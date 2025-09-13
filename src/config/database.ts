@@ -1,100 +1,120 @@
-import sqlite3 from 'sqlite3';
-import { promisify } from 'util';
+import { DatabaseConnection } from '../database/connection.js';
+import { BookingRepository } from '../database/repository.js';
+import { MigrationManager } from '../database/migration.js';
+import { DatabaseScheduler } from '../database/scheduler.js';
+import { SQLiteConfig } from '../database/types.js';
 import { Booking } from '../types/index.js';
 
 export class Database {
-  private db: sqlite3.Database;
+  private dbConnection: DatabaseConnection;
+  private bookingRepo: BookingRepository;
+  private migrationManager: MigrationManager;
+  private scheduler: DatabaseScheduler;
 
-  constructor(dbPath: string) {
-    this.db = new sqlite3.Database(dbPath);
+  constructor() {
+    const config: SQLiteConfig = {
+      dbPath: process.env.SQLITE_DB_PATH || './data/tennis_bookings.db',
+      backupPath: process.env.SQLITE_BACKUP_PATH || './data/backups/',
+      maxConnections: parseInt(process.env.SQLITE_MAX_CONNECTIONS || '10'),
+      timeout: parseInt(process.env.SQLITE_TIMEOUT || '30000'),
+      autoBackup: process.env.DB_AUTO_BACKUP === 'true',
+      backupInterval: parseInt(process.env.DB_BACKUP_INTERVAL || '24'),
+      retentionDays: parseInt(process.env.DB_RETENTION_DAYS || '30'),
+      logQueries: process.env.DB_LOG_QUERIES === 'true'
+    };
+
+    this.dbConnection = new DatabaseConnection(config);
+    this.bookingRepo = new BookingRepository(this.dbConnection);
+    this.migrationManager = new MigrationManager(this.dbConnection);
+    this.scheduler = new DatabaseScheduler(this.dbConnection, this.bookingRepo);
   }
 
-  async init() {
-    const run = promisify(this.db.run.bind(this.db));
+  async initialize(): Promise<void> {
+    console.log('🚀 Initializing database system...');
     
-    await run(`
-      CREATE TABLE IF NOT EXISTS bookings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        telegramUserId TEXT NOT NULL,
-        username TEXT,
-        phoneNumber TEXT,
-        sessionDate TEXT NOT NULL,
-        sessionTime TEXT NOT NULL,
-        googleEventId TEXT,
-        status TEXT DEFAULT 'active',
-        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    await run(`
-      CREATE TABLE IF NOT EXISTS auth_tokens (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        accessToken TEXT NOT NULL,
-        refreshToken TEXT NOT NULL,
-        expiryDate INTEGER NOT NULL,
-        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
+    // Run migrations
+    await this.migrationManager.runMigrations();
+    
+    // Start scheduler for maintenance tasks
+    this.scheduler.start();
+    
+    // Perform health check
+    const health = await this.dbConnection.healthCheck();
+    if (health.status === 'unhealthy') {
+      throw new Error(`Database health check failed: ${JSON.stringify(health.details)}`);
+    }
+    
+    console.log('✅ Database system initialized successfully');
   }
 
+  // Legacy methods for backward compatibility
   async createBooking(booking: Omit<Booking, 'id' | 'createdAt' | 'updatedAt'>): Promise<number> {
-    const run = promisify(this.db.run.bind(this.db));
-    const result = await run(`
-      INSERT INTO bookings 
-      (telegramUserId, username, phoneNumber, sessionDate, sessionTime, googleEventId, status)
-      VALUES ( ${booking.telegramUserId}, ${booking.username}, ${booking.phoneNumber}, ${booking.sessionDate}, ${booking.sessionTime}, ${booking.googleEventId}, ${booking.status})`);
-    return (result as any).lastID;
+    return this.bookingRepo.createBooking(booking);
   }
 
   async getBookingsByUser(telegramUserId: string): Promise<Booking[]> {
-    const all = promisify(this.db.all.bind(this.db));
-    return await all(`
-      SELECT * FROM bookings 
-      WHERE telegramUserId = ${telegramUserId} AND status = 'active'
-      ORDER BY sessionDate, sessionTime
-    `) as Promise<Booking[]>;
+    return this.bookingRepo.getBookingsByUser(telegramUserId);
   }
 
   async getBookingById(id: number): Promise<Booking | null> {
-    const get = promisify(this.db.get.bind(this.db));
-    return await get(`SELECT * FROM bookings WHERE id = ${id}`) as Promise<Booking | null>;
+    return this.bookingRepo.getBookingById(id);
   }
 
   async updateBooking(id: number, updates: Partial<Booking>): Promise<void> {
-    const fields = Object.keys(updates).map(key => `${key} = ?`).join(', ');
-    const values = Object.values(updates);
-
-    new Promise((res, rej) => {
-      return res(this.db.run(`
-        UPDATE bookings 
-        SET ${fields}, updatedAt = CURRENT_TIMESTAMP 
-        WHERE id = ?`, [...values, id]
-      ))
-    })
+    // Default to system user if not specified
+    await this.bookingRepo.updateBooking(id, updates, updates.telegramUserId || 'system');
   }
 
   async cancelBooking(id: number): Promise<void> {
-    await this.updateBooking(id, { status: 'cancelled' });
+    const booking = await this.bookingRepo.getBookingById(id);
+    if (!booking) {
+      throw new Error('Booking not found');
+    }
+    await this.bookingRepo.cancelBooking(id, booking.telegramUserId);
   }
 
   async getActiveBookings(): Promise<Booking[]> {
-    const all = promisify(this.db.all.bind(this.db));
-    return await all(`
-      SELECT * FROM bookings 
-      WHERE status = 'active'
-      ORDER BY sessionDate, sessionTime
-    `) as Promise<Booking[]>;
+    return this.bookingRepo.getActiveBookings();
   }
 
+  // Token management methods
   async storeTokens(accessToken: string, refreshToken: string, expiryDate: number): Promise<void> {
-    const run = promisify(this.db.run.bind(this.db));
-    await run(`DELETE FROM auth_tokens`); // Keep only latest token
-    await run(`INSERT INTO auth_tokens (accessToken, refreshToken, expiryDate) VALUES ("${accessToken}", "${refreshToken}", ${expiryDate})`);
+    const db = this.dbConnection.getDatabase();
+    const stmt = db.prepare(`
+      INSERT OR REPLACE INTO auth_tokens (id, accessToken, refreshToken, expiryDate, updatedAt)
+      VALUES (1, ?, ?, ?, CURRENT_TIMESTAMP)
+    `);
+    stmt.run(accessToken, refreshToken, expiryDate);
   }
 
   async getTokens(): Promise<{ accessToken: string; refreshToken: string; expiryDate: number } | null> {
-    const get = promisify(this.db.get.bind(this.db));
-    return get(`SELECT * FROM auth_tokens ORDER BY id DESC LIMIT 1`) as Promise<{ accessToken: string; refreshToken: string; expiryDate: number } | null>;
+    const db = this.dbConnection.getDatabase();
+    const stmt = db.prepare(`SELECT accessToken, refreshToken, expiryDate FROM auth_tokens WHERE id = 1`);
+    return stmt.get() || null as any;
+  }
+
+  // Enhanced methods
+  getBookingRepository(): BookingRepository {
+    return this.bookingRepo;
+  }
+
+  getDatabaseConnection(): DatabaseConnection {
+    return this.dbConnection;
+  }
+
+  async getStatistics(days: number = 30): Promise<any> {
+    return this.bookingRepo.getBookingStatistics(days);
+  }
+
+  async performBackup(): Promise<void> {
+    await this.dbConnection.backup();
+  }
+
+  async healthCheck(): Promise<any> {
+    return this.dbConnection.healthCheck();
+  }
+
+  close(): void {
+    this.dbConnection.close();
   }
 }
