@@ -18,6 +18,7 @@ export interface TimeSlot {
 }
 
 export interface DayTimeSlot {
+  duration: string
   date: string;
   available: boolean;
 }

@@ -9,11 +9,13 @@ export class BotService {
   private bot: Telegraf;
   private db: Database;
   private calendar: GoogleCalendarService;
+  private chatSessionHistory: Map<string, string>;
 
   constructor(bot: Telegraf, db: Database, calendar: GoogleCalendarService) {
     this.bot = bot;
     this.db = db;
     this.calendar = calendar;
+    this.chatSessionHistory = new Map();
     this.setupCommands();
   }
 
@@ -23,11 +25,14 @@ export class BotService {
     this.bot.command('mybookings', (ctx) => this.handleMyBookings(ctx));
     // this.bot.command('cancel', (ctx) => this.handleCancelCommand(ctx));
     
-    this.bot.action(/^book_(.+)$/, (ctx) => this.handleBookSlot(ctx));
+    this.bot.action(/^time_(\d)$/, (ctx) => this.showAvailableDaySlots(ctx));
+    this.bot.action(/^time_(\d)_\d{4}-\d{2}-\d{2}$/, (ctx) => this.showAvailableTimeSlots(ctx));
+    this.bot.action(/^booking_(.+)$/, (ctx) => this.handleBookSlot(ctx));
     // this.bot.action(/^cancel_(\d+)$/, (ctx) => this.handleCancelBooking(ctx));
     // this.bot.action(/^modify_(\d+)$/, (ctx) => this.handleModifyBooking(ctx));
-    this.bot.action('show_available_slots', (ctx) => this.showAvailableSlots(ctx));
-    this.bot.action('show_available_day_slots', (ctx) => this.showAvailableDaySlots(ctx));
+    // this.bot.action('show_available_slots', (ctx) => this.showAvailableSlots(ctx));
+    // this.bot.action('show_available_day_slots', (ctx) => this.showAvailableDaySlots(ctx));
+    this.bot.action('show_duration_slots', (ctx) => this.showAvailableDurationSlots(ctx));
     this.bot.action('main_menu', (ctx) => this.showMainMenu(ctx));
   }
 
@@ -37,73 +42,109 @@ export class BotService {
 
 I can help you:
 • 📅 Book tennis sessions
+• 🎾 Book court 
 • 👀 View your bookings
 • ✏️ Modify or cancel bookings
 
 Let's get started!`;
-    await ctx.reply(welcomeMessage, this.getMainMenuKeyboard());
+
+    const keyboard = this.getMainMenuKeyboard();
+    await ctx.reply(welcomeMessage, keyboard);
   }
 
   private async handleBook(ctx: Context) {
-    await this.showAvailableSlots(ctx);
+    await this.showAvailableDurationSlots(ctx);
   }
 
   private async showAvailableDaySlots(ctx: Context) {
-    try {
-      await ctx.reply('🔍 Checking available slots...');
-      
-      const slots = await this.calendar.getAvailableDaySlots(14);
-      
-      if (slots.length === 0) {
-        await ctx.reply('😔 No available slots found for the next 14 days. Please try again later.', 
-          Markup.inlineKeyboard([[Markup.button.callback('🏠 Main Menu', 'main_menu')]]));
-        return;
-      }
+    if (ctx.has(callbackQuery("data"))) {
+      const callbackData = ctx.callbackQuery?.data;
+      if (!callbackData) return;
+      const [, hour] = callbackData.split('_');
+      try {
+        await ctx.reply('🔍 Checking available slots...');
+        const slots = await this.calendar.getAvailableDaySlots(hour, 14);
+        if (slots.length === 0) {
+          await ctx.reply('😔 No available slots found for the next 14 days. Please try again later.', 
+            Markup.inlineKeyboard([[Markup.button.callback('🏠 Main Menu', 'main_menu')]]));
+          return;
+        }
 
-      const keyboard = this.createDaySlotsKeyboard(slots);
-      await ctx.reply('🎾 Available tennis sessions:\n\nSelect day to book:', keyboard);
-    } catch (error) {
-      console.error('Error showing available slots:', error);
-      await ctx.reply('❌ Sorry, I had trouble fetching available slots. Please try again later.',
-        Markup.inlineKeyboard([[Markup.button.callback('🏠 Main Menu', 'main_menu')]]));
+        const keyboard = this.createDaySlotsKeyboard(slots);
+        await ctx.reply('🎾 Available tennis sessions:\n\nSelect day to book:', keyboard);
+      } catch (error) {
+        console.error('Error showing available slots:', error);
+        await ctx.reply('❌ Sorry, I had trouble fetching available slots. Please try again later.',
+          Markup.inlineKeyboard([[Markup.button.callback('🏠 Main Menu', 'main_menu')]])
+        );
+      }
     }
   }
 
-  private async showAvailableSlots(ctx: Context) {
-    try {
-      await ctx.reply('🔍 Checking available slots...');
-      
-      const slots = await this.calendar.getAvailableSlots(14);
-      
-      if (slots.length === 0) {
-        await ctx.reply('😔 No available slots found for the next 7 days. Please try again later.', 
-          Markup.inlineKeyboard([[Markup.button.callback('🏠 Main Menu', 'main_menu')]]));
-        return;
-      }
+  private async showAvailableTimeSlots(ctx: Context) {
+    if (ctx.has(callbackQuery("data"))) {
+      const callbackData = ctx.callbackQuery?.data;
+      if (!callbackData) return;
+      console.log('show time slots', callbackData);
+      try {
+        await ctx.reply('🔍 Checking available time slots...');
+        const slots = await this.calendar.getAvailableTimeSlots(ctx.callbackQuery?.data);
+        
+        if (slots.length === 0) {
+          await ctx.reply('😔 No available slots found for this day. Please try different date or try again later.', 
+            Markup.inlineKeyboard([[Markup.button.callback('🏠 Main Menu', 'main_menu')]]));
+          return;
+        }
 
-      const keyboard = this.createSlotsKeyboard(slots);
-      await ctx.reply('🎾 Available tennis sessions:\n\nSelect a time slot to book:', keyboard);
-    } catch (error) {
-      console.error('Error showing available slots:', error);
-      await ctx.reply('❌ Sorry, I had trouble fetching available slots. Please try again later.',
-        Markup.inlineKeyboard([[Markup.button.callback('🏠 Main Menu', 'main_menu')]]));
+        const keyboard = this.createTimeSlotsKeyboard(slots);
+        await ctx.reply('🎾 Available tennis sessions:\n\nSelect time to book:', keyboard);
+      } catch (error) {
+        console.error('Error showing available slots:', error);
+        await ctx.reply('❌ Sorry, I had trouble fetching available slots. Please try again later.',
+          Markup.inlineKeyboard([[Markup.button.callback('🏠 Main Menu', 'main_menu')]]));
+      }
+    }
+  }
+
+  private async showAvailableDurationSlots(ctx: Context) {
+    if (ctx.has(callbackQuery("data"))) {
+      const callbackData = ctx.callbackQuery?.data;
+      if (!callbackData) return;
+      try {
+        await ctx.reply('🔍 Available duration slots...');
+        const keyboard = this.createDurationSlotsKeyboard();
+        await ctx.reply('⏱️ \n\nSelect session duration:', keyboard);
+      } catch (error) {
+        console.error('Error showing available slots:', error);
+        await ctx.reply('❌ Sorry, I had trouble fetching available slots. Please try again later.',
+          Markup.inlineKeyboard([[Markup.button.callback('🏠 Main Menu', 'main_menu')]]));
+      }
     }
   }
 
   private createDaySlotsKeyboard(slots: DayTimeSlot[]) {
     const buttons = slots.slice(0, 20).map(slot => {
       const displayDate = moment(`${slot.date}`).format('MMM DD');
-      return Markup.button.callback(`📅 ${displayDate}`, `book_day_${slot.date}`)
+      return Markup.button.callback(`📅 ${displayDate}`, `time_${slot.duration}_${slot.date}`)
     });
 
     buttons.push(Markup.button.callback('🏠 Main Menu', 'main_menu'));
     return Markup.inlineKeyboard(buttons, { columns: 2 })
   }
 
-  private createSlotsKeyboard(slots: TimeSlot[]) {
-    const buttons = slots.slice(0, 20).map(slot => {
-      const displayDate = moment(`${slot.date}`).format('MMM DD');
-      return Markup.button.callback(`📅 ${displayDate}`, `book_${slot.date}`)
+  private createTimeSlotsKeyboard(slots: TimeSlot[]) {
+    const buttons = slots.map(slot => {
+      const displayTime = moment(`${slot.date} ${slot.time}`).format('HH:mm');
+      return Markup.button.callback(`📅 ${displayTime}`, `booking_${slot.date}_${slot.time}`)
+    });
+
+    buttons.push(Markup.button.callback('🏠 Main Menu', 'main_menu'));
+    return Markup.inlineKeyboard(buttons, { columns: 2 })
+  }
+
+  private createDurationSlotsKeyboard() {
+    const buttons = [1, 2, 3, 4].map(hour=> {
+      return Markup.button.callback(`🕑 ${hour}`, `time_${hour}`);
     });
 
     buttons.push(Markup.button.callback('🏠 Main Menu', 'main_menu'));
@@ -148,7 +189,7 @@ Let's get started!`;
         const bookingId = await this.db.createBooking({
           telegramUserId: userId,
           username,
-          phoneNumber: ctx.from?.username, // Telegram doesn't expose phone numbers directly
+          phoneNumber: ctx.from?.username,
           sessionDate: date,
           sessionTime: time,
           googleEventId,
@@ -284,7 +325,7 @@ Let's get started!`;
   This ensures the calendar stays accurate and the coach is properly notified.`,
         Markup.inlineKeyboard([
           [Markup.button.callback(`❌ Cancel #${bookingId}`, `cancel_${bookingId}`)],
-          [Markup.button.callback('🎾 View Available Slots', 'show_available_day_slots')],
+          // [Markup.button.callback('🎾 View Available Slots', 'show_available_day_slots')],
           [Markup.button.callback('🏠 Main Menu', 'main_menu')]
         ]));
     }
@@ -292,7 +333,8 @@ Let's get started!`;
 
   private getMainMenuKeyboard() {
     return Markup.inlineKeyboard([
-      [Markup.button.callback('🎾 Book Session', 'show_available_day_slots')],
+      [Markup.button.callback('📅 Book tennis session', 'show_duration_slots')],
+      [Markup.button.callback('🎾 Book court', 'show_duration_slots')],
       [Markup.button.callback('📋 My Bookings', 'my_bookings')]
     ]);
   }

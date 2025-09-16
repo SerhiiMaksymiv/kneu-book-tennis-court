@@ -75,7 +75,7 @@ export class GoogleCalendarService {
     }
   }
 
-  async getAvailableDaySlots(daysAhead: number = 7): Promise<DayTimeSlot[]> {
+  async getAvailableDaySlots(duration: string, daysAhead: number = 7): Promise<DayTimeSlot[]> {
     try {
       await this.refreshTokenIfNeeded();
       
@@ -102,8 +102,100 @@ export class GoogleCalendarService {
         const currentDate = moment().add(day, 'days').format('YYYY-MM-DD');
         
         availableSlots.push({
+          duration: duration,
           date: currentDate,
           available: !busySlots.has(currentDate)
+        });
+      }
+
+      return availableSlots.filter(slot => slot.available);
+    } catch (error) {
+      console.error('Error fetching available slots:', error);
+      throw error;
+    }
+  }
+
+  async getAvailableTimeSlots(time: string): Promise<TimeSlot[]> {
+    try {
+      await this.refreshTokenIfNeeded();
+
+      const [, hour, day] = time.split('_');
+      const date = moment(day).format('YYYY-MM-DD HH:mm');
+      const now = moment()
+      const bookingDate = moment(date);
+      
+      const response = await this.calendar.events.list({
+        calendarId: process.env.CALENDAR_ID || 'primary',
+        timeMin: bookingDate.toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime'
+      });
+
+      const busySlots = new Set(
+        response.data.items?.map((event: any) => 
+          moment(event.start.dateTime).format('YYYY-MM-DD HH:mm')
+        ) || []
+      );
+
+      const availableSlots: TimeSlot[] = [];
+      const workingHours = [8, 9, 10, 11, 14, 15, 16, 17, 18, 19]; // 9AM-12PM, 2PM-8PM
+      
+      for (const hour of workingHours) {
+        const slotTime = bookingDate.clone().hour(hour).minute(0);
+        
+        // Skip past times for today
+        if (slotTime.isBefore(now)) continue;
+        
+        const slotKey = slotTime.format('YYYY-MM-DD HH:mm');
+        availableSlots.push({
+          date: slotTime.format('YYYY-MM-DD'),
+          time: slotTime.format('HH:mm'),
+          available: !busySlots.has(slotKey)
+        });
+      }
+
+      return availableSlots.filter(slot => slot.available);
+    } catch (error) {
+      console.error('Error fetching available slots:', error);
+      throw error;
+    }
+  }
+
+  async getAvailableDurationSlots(day: string): Promise<TimeSlot[]> {
+    try {
+      await this.refreshTokenIfNeeded();
+
+      const date = moment(day.replace('book_day_', '')).format('YYYY-MM-DD HH:mm');
+      const now = moment()
+      const bookingDate = moment(date);
+      
+      const response = await this.calendar.events.list({
+        calendarId: process.env.CALENDAR_ID || 'primary',
+        timeMin: bookingDate.toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime'
+      });
+
+      const busySlots = new Set(
+        response.data.items?.map((event: any) => 
+          moment(event.start.dateTime).format('YYYY-MM-DD HH:mm')
+        ) || []
+      );
+
+      const availableSlots: TimeSlot[] = [];
+      const workingHours = [8, 9, 10, 11, 14, 15, 16, 17, 18, 19]; // 9AM-12PM, 2PM-8PM
+      
+      for (const hour of workingHours) {
+        const slotTime = bookingDate.clone().hour(hour).minute(0);
+        
+        // Skip past times for today
+        if (slotTime.isBefore(now)) continue;
+        
+        const slotKey = slotTime.format('YYYY-MM-DD HH:mm');
+        availableSlots.push({
+          date: slotTime.format('YYYY-MM-DD'),
+          time: slotTime.format('HH:mm'),
+          available: !busySlots.has(slotKey)
         });
       }
 
